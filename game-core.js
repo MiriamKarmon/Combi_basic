@@ -173,9 +173,12 @@ HostGame.prototype.reveal = function () {
   }
   this.broadcast({ t: 'reveal', correct: q.correct, qi: this.qIdx + 1, results: results, top: this.roster().slice(0, 5) });
   this.onEvent('reveal', { correct: q.correct, correctText: q.options[q.correct], top: this.roster().slice(0, 5) });
-  var self = this;
-  if (this.timer) this.clearTimeout(this.timer);
-  this.timer = this.setTimeout(function () { self.nextQuestion(); }, this.revealMs);
+  // no auto-advance: the correct answer stays up until the host taps "next" (nextFromReveal)
+};
+
+HostGame.prototype.nextFromReveal = function () { // host taps "next question" after explaining
+  if (this.state !== 'reveal') return;
+  this.nextQuestion();
 };
 
 HostGame.prototype.endStage = function () {

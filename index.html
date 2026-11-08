@@ -7,6 +7,8 @@
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="game-core.js"></script>
 <script src="secure-channel.js"></script>
+<script src="qrcode.min.js"></script>
+<script src="qr-render.js"></script>
 <style>
   :root{
     --bg:#3b1f63; --bg2:#572d8f; --card:#ffffff; --ink:#241a3a;
@@ -74,8 +76,7 @@
   .podium div{background:#efeafc;color:var(--ink);border-radius:12px 12px 0 0;text-align:center;padding:10px 8px;font-weight:800;min-width:88px}
   .podium .p1{background:var(--accent);font-size:1.15rem}
   .footer-note{color:#cbbfe8;font-size:.85rem;text-align:center;margin-top:auto;padding-top:10px}
-  .linkrow{display:flex;gap:8px;margin:8px 0}
-  .linkrow input{direction:ltr;font-size:.95rem}
+  .qrwrap{background:#fff;padding:12px;border-radius:18px;display:inline-block;margin:8px auto;line-height:0}
   @media (max-width:420px){ .answers{grid-template-columns:1fr 1fr} .ans{min-height:64px;font-size:1.02rem} }
 </style>
 </head>
@@ -237,31 +238,29 @@ function hostLobby(){
     '<div class="card center">' +
       '<div><span class="status ok">מחובר</span></div>' +
       '<h2>החדר מוכן!</h2>' +
-      '<p>השחקניות נכנסות לקישור הזה או עם הקוד:</p>' +
+      '<p>השחקניות סורקות את הקוד הזה עם המצלמה:</p>' +
+      '<div class="qrwrap"><div id="qrBox"></div></div>' +
+      '<p style="margin:4px 0 0">או מקישות את קוד החדר:</p>' +
       '<div class="code-box" dir="ltr">'+fmtCode(host.room)+'</div>' +
-      '<div class="linkrow"><input type="text" id="joinLink" readonly value="'+esc(joinUrl)+'"><button class="btn btn-second" style="width:auto;margin:6px 0" id="bCopy">העתקה</button></div>' +
       '<h2>שחקניות ('+host.roster().length+')</h2>' +
       '<div class="roster">'+chips+'</div>' +
       '<button class="btn btn-primary" id="bStart" '+(host.roster().length?'':'disabled style="opacity:.5"')+'>מתחילות! 🎮</button>' +
       '<p class="muted" style="font-size:.85rem">אל תסגרי את הלשונית - המסך שלך מנהל את המשחק.</p>' +
     '</div>';
-  document.getElementById('bCopy').onclick = function(){
-    var inp = document.getElementById('joinLink');
-    (navigator.clipboard ? navigator.clipboard.writeText(inp.value) : Promise.reject()).then(function(){
-      document.getElementById('bCopy').textContent = 'הועתק!';
-    }).catch(function(){ inp.select(); document.execCommand('copy'); });
-  };
+  var qrOk = window.CombiQr && CombiQr.draw(document.getElementById('qrBox'), joinUrl);
+  if (!qrOk) document.querySelector('.qrwrap').style.display = 'none';
   document.getElementById('bStart').onclick = function(){ if (host.roster().length) host.startGame(); };
 }
 function introVideo(box, st, onEnd){
   var v = document.createElement('video');
   v.src = 'videos/stage' + st + '.mp4';
-  v.autoplay = true; v.muted = true; v.playsInline = true; v.setAttribute('playsinline','');
+  v.autoplay = true; v.playsInline = true; v.setAttribute('playsinline','');
   v.style.cssText = 'width:100%;border-radius:18px;background:#241a3a';
   v.onended = function(){ onEnd && onEnd(); };
   v.onerror = function(){ playExplainer(box, st, onEnd, true); };
   box.innerHTML = ''; box.appendChild(v);
-  var pr = v.play(); if (pr && pr.catch) pr.catch(function(){});
+  var pr = v.play();
+  if (pr && pr.catch) pr.catch(function(){ v.muted = true; var p2 = v.play(); if (p2 && p2.catch) p2.catch(function(){}); });
   return v;
 }
 function hostIntro(){
@@ -293,13 +292,17 @@ function hostQuestion(d){
 function hostReveal(d){
   stopCountdown();
   var rows = d.top.map(function(p,i){ return '<tr><td>'+(i+1)+'</td><td>'+esc(p.name)+'</td><td style="text-align:left">'+p.score+'</td></tr>'; }).join('');
+  var lastQ = (host.qIdx + 1 >= host.currentStage().questions.length);
   app.innerHTML =
     '<div class="card center">' +
       '<h2>התשובה הנכונה</h2>' +
       '<div class="winner-banner">'+esc(d.correctText)+'</div>' +
+      '<p class="muted" style="font-size:.9rem;margin:6px 0 0">זמן להסביר את התשובה - הכל מחכה עד שתעברי הלאה</p>' +
       '<h2 style="margin-top:14px">מובילות</h2>' +
       '<table class="board">'+rows+'</table>' +
-    '</div>';
+    '</div>' +
+    '<button class="btn btn-primary" id="bNextQ">'+(lastQ?'לסיכום השלב 🏁':'לשאלה הבאה ⏭')+'</button>';
+  document.getElementById('bNextQ').onclick = function(){ host.nextFromReveal(); };
 }
 function hostStageEnd(d){
   stopCountdown();
