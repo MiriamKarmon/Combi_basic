@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>קומבי-קוויז | משחק קבוצתי בקומבינטוריקה</title>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="game-core.js"></script>
+<script src="secure-channel.js"></script>
+<style>
+  :root{
+    --bg:#3b1f63; --bg2:#572d8f; --card:#ffffff; --ink:#241a3a;
+    --red:#e3354f; --blue:#2d6cdf; --yellow:#f0a202; --green:#2f9e63;
+    --accent:#ffd166; --muted:#8f86a8;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;height:100%}
+  body{
+    font-family:"Heebo","Assistant","Segoe UI",Arial,sans-serif;
+    background:linear-gradient(160deg,var(--bg),var(--bg2) 60%,#6d3ba8);
+    color:#fff; min-height:100%; display:flex; flex-direction:column; align-items:center;
+  }
+  #app{width:100%;max-width:760px;padding:14px;display:flex;flex-direction:column;gap:12px;flex:1}
+  .card{background:var(--card);color:var(--ink);border-radius:18px;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  h1{font-size:1.7rem;margin:.2em 0}
+  h2{font-size:1.25rem;margin:.2em 0}
+  .center{text-align:center}
+  .muted{color:var(--muted)}
+  .btn{display:block;width:100%;border:0;border-radius:14px;padding:15px 18px;font-size:1.15rem;font-weight:700;cursor:pointer;margin:8px 0;transition:transform .06s}
+  .btn:active{transform:scale(.98)}
+  .btn-primary{background:var(--green);color:#fff}
+  .btn-second{background:#efeafc;color:var(--ink)}
+  .btn-accent{background:var(--accent);color:var(--ink)}
+  input[type=text]{width:100%;padding:14px;border-radius:14px;border:2px solid #d9d2ea;font-size:1.15rem;text-align:center;margin:6px 0}
+  .code-box{font-size:2.6rem;font-weight:800;letter-spacing:.25em;background:#241a3a;color:var(--accent);border-radius:14px;padding:10px 6px;text-align:center;direction:ltr}
+  .roster{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:10px 0}
+  .chip{background:#efeafc;color:var(--ink);border-radius:999px;padding:7px 14px;font-weight:700;animation:pop .25s}
+  .chip small{color:var(--muted);font-weight:400}
+  @keyframes pop{from{transform:scale(.4);opacity:0}}
+  .timerbar{height:12px;background:#d9d2ea;border-radius:99px;overflow:hidden;margin:8px 0}
+  .timerbar>div{height:100%;background:var(--green);width:100%;transition:width .2s linear}
+  .timerbar>div.low{background:var(--red)}
+  .answers{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .ans{border:0;border-radius:14px;padding:20px 12px;font-size:1.15rem;font-weight:700;color:#fff;cursor:pointer;min-height:76px;display:flex;align-items:center;gap:8px;justify-content:center;transition:transform .06s,opacity .2s}
+  .ans:active{transform:scale(.97)}
+  .ans:disabled{cursor:default;opacity:.85}
+  .ans0{background:var(--red)} .ans1{background:var(--blue)} .ans2{background:var(--yellow);color:#3d2e00} .ans3{background:var(--green)}
+  .ans.correct{outline:5px solid #8effc1; opacity:1}
+  .ans.dim{opacity:.35}
+  .ans.picked{outline:5px solid #fff}
+  .shape{font-size:1.3rem}
+  .qtext{font-size:1.3rem;font-weight:800;line-height:1.45;margin:6px 0 2px}
+  .qmeta{color:var(--muted);font-size:.95rem}
+  .big-emoji{font-size:2.6rem;animation:bounce 1.6s infinite}
+  @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+  .winner-banner{background:linear-gradient(135deg,#ffd166,#ff9f1c);color:#3d2e00;border-radius:16px;padding:16px;text-align:center;font-size:1.3rem;font-weight:800;animation:pop .35s}
+  .board{width:100%;border-collapse:collapse;margin-top:8px}
+  .board td{padding:8px 10px;border-bottom:1px solid #eee5ff;font-size:1.05rem}
+  .board tr:first-child td{font-weight:800}
+  .status{font-size:.85rem;padding:4px 10px;border-radius:99px;background:rgba(255,255,255,.15)}
+  .status.ok{background:#1f7a4d}.status.bad{background:#a1253a}
+  .slide{animation:slidein .5s}
+  @keyframes slidein{from{opacity:0;transform:translateY(24px)}}
+  .formula{font-size:1.5rem;font-weight:800;background:#241a3a;color:var(--accent);border-radius:12px;padding:10px;direction:ltr;display:inline-block;margin-top:8px}
+  .visual{font-size:2.2rem;letter-spacing:.12em;margin:10px 0;min-height:64px}
+  .visual .slot{display:inline-block;background:#efeafc;border-radius:10px;padding:6px 10px;margin:3px;color:var(--ink);font-weight:800;animation:pop .4s}
+  .visual .dimmed{opacity:.35;text-decoration:line-through}
+  .progress-dots{display:flex;gap:6px;justify-content:center;margin:6px 0}
+  .progress-dots span{width:10px;height:10px;border-radius:50%;background:#d9d2ea}
+  .progress-dots span.on{background:var(--yellow)}
+  .feedback{font-size:2rem;font-weight:800;text-align:center;margin:8px 0}
+  .feedback.ok{color:var(--green)} .feedback.no{color:var(--red)}
+  .podium{display:flex;align-items:flex-end;justify-content:center;gap:10px;margin:14px 0}
+  .podium div{background:#efeafc;color:var(--ink);border-radius:12px 12px 0 0;text-align:center;padding:10px 8px;font-weight:800;min-width:88px}
+  .podium .p1{background:var(--accent);font-size:1.15rem}
+  .footer-note{color:#cbbfe8;font-size:.85rem;text-align:center;margin-top:auto;padding-top:10px}
+  .linkrow{display:flex;gap:8px;margin:8px 0}
+  .linkrow input{direction:ltr;font-size:.95rem}
+  @media (max-width:420px){ .answers{grid-template-columns:1fr 1fr} .ans{min-height:64px;font-size:1.02rem} }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+'use strict';
+/* ================= setup ================= */
+var BROKERS = ['wss://broker.emqx.io:8084/mqtt'];
+var qs = new URLSearchParams(location.search);
+var QUESTION_MS = (parseInt(qs.get('qsec')) || 30) * 1000;
+var REVEAL_MS = (parseInt(qs.get('rsec')) || 6) * 1000;
+var hash = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+var app = document.getElementById('app');
+var mqttClient = null, host = null, player = null, myPid = null, STAGES = null;
+function loadStages(cb){
+  if (window.STAGES) { STAGES = window.STAGES; cb(); return; }
+  var s = document.createElement('script');
+  s.src = 'questions.js';
+  s.onload = function(){ STAGES = window.STAGES; cb(); };
+  s.onerror = function(){ app.innerHTML = '<div class="card center"><h2>חסר הקובץ questions.js</h2><p>ודאי שהועלה לגיטהאב יחד עם index.html ו-game-core.js.</p></div>'; };
+  document.head.appendChild(s);
+}
+var countdownTimer = null;
+
+function el(html){ var d=document.createElement('div'); d.innerHTML=html; return d.firstElementChild; }
+function esc(s){ return String(s).replace(/[&<>"]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+function beep(ok){
+  try{
+    var ctx = beep.ctx || (beep.ctx = new (window.AudioContext||window.webkitAudioContext)());
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = ok ? 880 : 180; o.type = ok ? 'sine' : 'sawtooth';
+    g.gain.setValueAtTime(0.08, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (ok?0.25:0.45));
+    o.start(); o.stop(ctx.currentTime + (ok?0.25:0.45));
+  }catch(e){}
+}
+function connectMqtt(onReady){
+  var c = mqtt.connect(BROKERS[0], { connectTimeout: 12000, reconnectPeriod: 3000,
+    clientId: 'cq-web-' + Math.random().toString(36).slice(2) });
+  c.on('connect', function(){ onReady(c); });
+  return c;
+}
+function stopCountdown(){ if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } }
+function startCountdown(barId, numId, durMs, fromMs){
+  stopCountdown();
+  var start = Date.now();
+  countdownTimer = setInterval(function(){
+    var left = Math.max(0, durMs - (Date.now() - start));
+    var bar = document.getElementById(barId), num = document.getElementById(numId);
+    if (bar) { bar.style.width = (100*left/durMs)+'%'; bar.className = left < 6000 ? 'low' : ''; }
+    if (num) num.textContent = Math.ceil(left/1000);
+    if (left <= 0) stopCountdown();
+  }, 150);
+}
+
+/* ================= explainers (animated intro per stage) ================= */
+var EXPLAINERS = {
+  1: [
+    {title:'שלב 1 · עקרון הכפל', text:'כשעושים גם פעולה אחת וגם פעולה שנייה - כופלים! 2 חולצות ועוד 3 מכנסיים = 6 לוקים.', visual:'👕👖', slots:['2','×','3','=','6']},
+    {title:'ומתי מחברים?', text:'כשבוחרים דבר אחד מתוך קבוצה זו או אחרת - מחברים: 6 מאפים מלוחים או 4 מתוקים = 10 אפשרויות.', visual:'🥐🧁', slots:['6','+','4','=','10']},
+    {title:'הכלל', text:'"וגם / ואז" → כפל. "או" → חיבור.', formula:'וגם → ×   |   או → +'}
+  ],
+  2: [
+    {title:'שלב 2 · עם חזרה, סדר חשוב', text:'קוד בן 3 ספרות: מותר לחזור על ספרה, והסדר משנה (123 ≠ 321). בכל מקום 10 אפשרויות.', visual:'🔢', slots:['10','×','10','×','10','=','1000']},
+    {title:'כל מקום - n אפשרויות', text:'יש n אפשרויות בכל אחד מ-k מקומות, ומותר לחזור.', formula:'n^k'}
+  ],
+  3: [
+    {title:'שלב 3 · בלי חזרה, סדר לא חשוב', text:'בוחרים ועדה של 3 מתוך 8. אי אפשר לבחור פעמיים, ואין משמעות למי נבחרה ראשונה.', visual:'👩‍🎓', slots:['8','←','3']},
+    {title:'למה מחלקים?', text:'כל ועדה נספרה 3! פעמים (כל הסדרים שלה) - אז מחלקים. מתקבל 56.', formula:'C(8,3) = 8! / (3!·5!) = 56'}
+  ],
+  4: [
+    {title:'שלב 4 · עם חזרה, סדר לא חשוב', text:'4 סוגי סופגניות, קונות 3. מותר שתיים מאותו סוג, ואין סדר.', visual:'🍩', slots:['★★','│','★','│']},
+    {title:'כוכבים ומחיצות', text:'סופרים כמה מכל סוג: k כוכבים ו־n-1 מחיצות.', formula:'C(n+k-1,k) = C(6,3) = 20'}
+  ],
+  5: [
+    {title:'שלב 5 · בלי חזרה, סדר חשוב', text:'10 רצות מתחרות על זהב, כסף וארד. אי אפשר לזכות פעמיים, והמקום משנה!', visual:'🏆', slots:['10','×','9','×','8','=','720']},
+    {title:'תמורות', text:'k מקומות מסודרים מתוך n. ואם מסדרים את כל ה-n? זה n עצרת.', formula:'P(n,k) = n! / (n-k)!'}
+  ]
+};
+function playExplainer(container, stageId, onDone, isHost){
+  var slides = EXPLAINERS[stageId] || [];
+  var i = 0;
+  function show(){
+    if (i >= slides.length){ onDone && onDone(); return; }
+    var s = slides[i];
+    var slots = (s.slots||[]).map(function(x,j){ return '<span class="slot" style="animation-delay:'+(j*0.25)+'s">'+esc(x)+'</span>'; }).join(' ');
+    container.innerHTML =
+      '<div class="card center slide" style="flex:1;display:flex;flex-direction:column;justify-content:center">' +
+        '<div class="big-emoji">'+s.visual+'</div>' +
+        '<h2>'+esc(s.title)+'</h2>' +
+        '<p style="font-size:1.15rem;line-height:1.6">'+esc(s.text)+'</p>' +
+        (slots?'<div class="visual">'+slots+'</div>':'') +
+        (s.formula?'<div class="formula">'+esc(s.formula)+'</div>':'') +
+        '<div class="progress-dots">'+ slides.map(function(_,j){return '<span class="'+(j===i?'on':'')+'"></span>';}).join('') +'</div>' +
+      '</div>';
+    i++;
+    container._slideTimer = setTimeout(show, 5200);
+  }
+  show();
+}
+function stopExplainer(container){ if (container._slideTimer){ clearTimeout(container._slideTimer); container._slideTimer=null; } var v = container && container.querySelector('video'); if (v) v.pause(); }
+
+/* ================= home ================= */
+function showHome(){
+  stopCountdown();
+  app.innerHTML =
+    '<div class="card center" style="margin-top:8vh">' +
+      '<div class="big-emoji">🧮</div>' +
+      '<h1>קומבי-קוויז</h1>' +
+      '<p class="muted">משחק קבוצתי בקומבינטוריקה · 5 שלבים · 20 שאלות בכל שלב · 30 שניות לשאלה</p>' +
+      '<button class="btn btn-primary" id="bHost">אני המנחה (יוצרת חדר)</button>' +
+      '<button class="btn btn-accent" id="bJoin">אני שחקנית (נכנסת עם קוד)</button>' +
+    '</div>' +
+    '<div class="footer-note">הסנכרון עובד דרך שירות הודעות ציבורי חינמי (EMQX), אבל כל ההודעות מוצפנות וחתומות עם קוד החדר - רק מי שיש לה את הקוד יכולה לקרוא או להשתתף. מסך המנחה חייב להישאר פתוח כל המשחק.</div>';
+  document.getElementById('bHost').onclick = hostCreate;
+  document.getElementById('bJoin').onclick = function(){ showJoin(); };
+  if (hash.get('room')) showJoin();
+}
+
+/* ================= host ================= */
+function hostCreate(){
+  var room = CombiCore.makeRoomCode();
+  app.innerHTML = '<div class="card center"><h2>יוצרת חדר…</h2><p class="muted">מתחברת לשרות ההודעות</p></div>';
+  loadStages(function(){ connectHost(room); });
+}
+function fmtCode(c){ c = CombiSecure.normalizeCode(c); return c.replace(/(.{3})(.{3})(.{3})/, '$1-$2-$3'); }
+function connectHost(room){
+  mqttClient = connectMqtt(function(c){
+    CombiSecure.createHostChannel(room, { publish: function(topic, env){ c.publish(topic, JSON.stringify(env)); } }).then(function(ch){
+      c.subscribe(ch.topics.inn, function(){
+        host = new CombiCore.HostGame({
+          room: room, stages: STAGES, questionMs: QUESTION_MS, revealMs: REVEAL_MS, topics: ch.topics,
+          send: function(topic, obj){ ch.send(topic, obj); },
+          onEvent: hostEvent
+        });
+        c.on('message', function(topic, payload){ ch.accept(topic, payload.toString()).then(function(r){ if (r) { try{ host.handleMessage(r.topic, r.msg); }catch(e){} } }); });
+        hostLobby();
+      });
+    });
+  });
+}
+function hostEvent(kind, d){
+  if (kind === 'join') { if (host.state === 'lobby') hostLobby(); }
+  else if (kind === 'intro') { hostIntro(); }
+  else if (kind === 'question') { hostQuestion(d); }
+  else if (kind === 'answer') { var e2=document.getElementById('answeredCount'); if(e2) e2.textContent = d.answered + ' / ' + d.total; }
+  else if (kind === 'reveal') { hostReveal(d); }
+  else if (kind === 'stageEnd') { hostStageEnd(d); }
+  else if (kind === 'final') { hostFinal(d); }
+  else if (kind === 'lobby') { hostLobby(); }
+}
+function hostLobby(){
+  stopCountdown();
+  var joinUrl = location.origin + location.pathname + '#room=' + host.room;
+  var chips = host.roster().map(function(p){ return '<span class="chip">'+esc(p.name)+'</span>'; }).join('') || '<span class="muted">עוד אין שחקניות…</span>';
+  app.innerHTML =
+    '<div class="card center">' +
+      '<div><span class="status ok">מחובר</span></div>' +
+      '<h2>החדר מוכן!</h2>' +
+      '<p>השחקניות נכנסות לקישור הזה או עם הקוד:</p>' +
+      '<div class="code-box" dir="ltr">'+fmtCode(host.room)+'</div>' +
+      '<div class="linkrow"><input type="text" id="joinLink" readonly value="'+esc(joinUrl)+'"><button class="btn btn-second" style="width:auto;margin:6px 0" id="bCopy">העתקה</button></div>' +
+      '<h2>שחקניות ('+host.roster().length+')</h2>' +
+      '<div class="roster">'+chips+'</div>' +
+      '<button class="btn btn-primary" id="bStart" '+(host.roster().length?'':'disabled style="opacity:.5"')+'>מתחילות! 🎮</button>' +
+      '<p class="muted" style="font-size:.85rem">אל תסגרי את הלשונית - המסך שלך מנהל את המשחק.</p>' +
+    '</div>';
+  document.getElementById('bCopy').onclick = function(){
+    var inp = document.getElementById('joinLink');
+    (navigator.clipboard ? navigator.clipboard.writeText(inp.value) : Promise.reject()).then(function(){
+      document.getElementById('bCopy').textContent = 'הועתק!';
+    }).catch(function(){ inp.select(); document.execCommand('copy'); });
+  };
+  document.getElementById('bStart').onclick = function(){ if (host.roster().length) host.startGame(); };
+}
+function introVideo(box, st, onEnd){
+  var v = document.createElement('video');
+  v.src = 'videos/stage' + st + '.mp4';
+  v.autoplay = true; v.muted = true; v.playsInline = true; v.setAttribute('playsinline','');
+  v.style.cssText = 'width:100%;border-radius:18px;background:#241a3a';
+  v.onended = function(){ onEnd && onEnd(); };
+  v.onerror = function(){ playExplainer(box, st, onEnd, true); };
+  box.innerHTML = ''; box.appendChild(v);
+  var pr = v.play(); if (pr && pr.catch) pr.catch(function(){});
+  return v;
+}
+function hostIntro(){
+  stopCountdown();
+  var st = host.stageIdx + 1;
+  app.innerHTML = '<div class="card center"><span class="status ok">שלב '+st+' מתוך 5 · סרטון הסבר לפני השאלות</span></div><div id="explain" style="display:flex;flex:1"></div>' +
+    '<button class="btn btn-accent" id="bSkip">דלגי לשאלות ⏭</button>';
+  var box = document.getElementById('explain');
+  window._hv = introVideo(box, st, function(){ if (host.state==='intro') host.introDone(); });
+  document.getElementById('bSkip').onclick = function(){ stopExplainer(box); host.introDone(); };
+}
+function hostQuestion(d){
+  var q = host.currentStage().questions[host.qIdx];
+  var opts = q.options.map(function(o,i){
+    return '<button class="ans ans'+i+'" disabled><span class="shape">'+['▲','◆','●','■'][i]+'</span>'+esc(o)+'</button>';
+  }).join('');
+  app.innerHTML =
+    '<div class="card">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center"><span class="qmeta">שלב '+(host.stageIdx+1)+' · '+esc(host.currentStage().title)+'</span><span class="qmeta">שאלה '+d.qi+'/'+d.total+'</span></div>' +
+      '<div class="timerbar"><div id="tbar"></div></div>' +
+      '<div class="qtext">'+esc(q.q)+'</div>' +
+      '<div class="answers">'+opts+'</div>' +
+      '<p class="center" style="margin:12px 0 0">ענו: <b id="answeredCount" dir="ltr">0 / '+host.roster().length+'</b></p>' +
+    '</div>' +
+    '<button class="btn btn-second" id="bEnd">סיימי שאלה ⏱ <span id="tnum"></span></button>';
+  startCountdown('tbar','tnum', QUESTION_MS);
+  document.getElementById('bEnd').onclick = function(){ host.reveal(); };
+}
+function hostReveal(d){
+  stopCountdown();
+  var rows = d.top.map(function(p,i){ return '<tr><td>'+(i+1)+'</td><td>'+esc(p.name)+'</td><td style="text-align:left">'+p.score+'</td></tr>'; }).join('');
+  app.innerHTML =
+    '<div class="card center">' +
+      '<h2>התשובה הנכונה</h2>' +
+      '<div class="winner-banner">'+esc(d.correctText)+'</div>' +
+      '<h2 style="margin-top:14px">מובילות</h2>' +
+      '<table class="board">'+rows+'</table>' +
+    '</div>';
+}
+function hostStageEnd(d){
+  stopCountdown();
+  var rows = d.board.map(function(p,i){ return '<tr><td>'+(i+1)+'</td><td>'+esc(p.name)+'</td><td>'+p.stageScore+'</td><td style="text-align:left">'+p.score+'</td></tr>'; }).join('');
+  var last = (d.stage >= 5);
+  app.innerHTML =
+    '<div class="card center">' +
+      '<div class="big-emoji">🏁</div>' +
+      '<h2>סוף שלב '+d.stage+': '+esc(d.title)+'</h2>' +
+      (d.winner ? '<div class="winner-banner">🌟 מנצחת השלב: '+esc(d.winner.name)+' עם '+d.winner.stageScore+' נקודות! 🌟</div>' : '') +
+      '<table class="board"><tr><td></td><td></td><td>בשלב</td><td style="text-align:left">סה"כ</td></tr>'+rows+'</table>' +
+      '<button class="btn btn-primary" id="bNext">'+(last?'לתוצאות הגמר 🏆':'לשלב הבא ⏭')+'</button>' +
+    '</div>';
+  document.getElementById('bNext').onclick = function(){ host.hostContinue(); };
+}
+function hostFinal(d){
+  stopCountdown();
+  var b = d.board;
+  var podium = [b[1],b[0],b[2]].map(function(p,i){
+    if (!p) return '';
+    var cls = i===1?'p1':'';
+    var h = i===1?120:(i===0?88:70);
+    return '<div class="'+cls+'" style="height:'+h+'px"><div style="font-size:1.6rem">'+['🥈','🥇','🥉'][i]+'</div>'+esc(p.name)+'<br><small>'+p.score+'</small></div>';
+  }).join('');
+  var rows = b.map(function(p,i){ return '<tr><td>'+(i+1)+'</td><td>'+esc(p.name)+'</td><td style="text-align:left">'+p.score+'</td></tr>'; }).join('');
+  app.innerHTML =
+    '<div class="card center">' +
+      '<div class="big-emoji">🏆</div>' +
+      '<h1>תוצאות הגמר</h1>' +
+      '<div class="podium">'+podium+'</div>' +
+      '<table class="board">'+rows+'</table>' +
+      '<button class="btn btn-primary" id="bAgain">משחק חדש באותו חדר 🔄</button>' +
+      '<button class="btn btn-second" id="bHome">למסך הבית</button>' +
+    '</div>';
+  document.getElementById('bAgain').onclick = function(){ host.hostContinue(); };
+  document.getElementById('bHome').onclick = function(){ location.hash=''; location.reload(); };
+}
+
+/* ================= player ================= */
+function showJoin(){
+  var preset = hash.get('room') || '';
+  app.innerHTML =
+    '<div class="card center" style="margin-top:8vh">' +
+      '<div class="big-emoji">🎮</div>' +
+      '<h1>כניסה למשחק</h1>' +
+      '<input type="text" id="inCode" placeholder="קוד חדר" maxlength="11" style="text-transform:uppercase;direction:ltr;letter-spacing:.3em;font-weight:800" value="'+esc(preset)+'">' +
+      '<input type="text" id="inName" placeholder="בחרי שם משתמש" maxlength="20">' +
+      '<button class="btn btn-primary" id="bGo">נכנסת! 🚀</button>' +
+      '<p class="muted" id="joinMsg"></p>' +
+    '</div>';
+  document.getElementById('bGo').onclick = doJoin;
+}
+function doJoin(){
+  var code = CombiSecure.normalizeCode(document.getElementById('inCode').value);
+  var name = document.getElementById('inName').value.trim();
+  var msg = document.getElementById('joinMsg');
+  if (code.length !== 9){ msg.textContent = 'צריך קוד חדר בן 9 תווים מהמנחה'; return; }
+  if (!name){ msg.textContent = 'צריך לבחור שם משתמש'; return; }
+  msg.textContent = 'מתחברת…';
+  myPid = 'p-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  mqttClient = connectMqtt(function(c){
+    CombiSecure.createPlayerChannel(code, myPid, {
+      publish: function(topic, env){ c.publish(topic, JSON.stringify(env)); },
+      onTamper: function(){
+        var el = document.getElementById('tamperWarn');
+        if (!el) { var d = document.createElement('div'); d.id = 'tamperWarn'; d.className = 'status err'; d.textContent = 'זוהתה הודעה לא מאומתת - נחסמה'; app.prepend(d); }
+      }
+    }).then(function(ch){
+      c.subscribe(ch.topics.out, function(){
+        player = new CombiCore.PlayerClient({
+          room: code, pid: myPid, name: name, topics: ch.topics,
+          send: function(topic, obj){ ch.send(topic, obj); },
+          onState: playerState
+        });
+        c.on('message', function(topic, payload){ ch.accept(topic, payload.toString()).then(function(r){ if (r) { try{ player.handleMessage(r.topic, r.msg); }catch(e){} } }); });
+        player.join();
+        var tries = 0;
+        var t = setInterval(function(){
+          tries++;
+          if (player.state.screen !== 'joining'){ clearInterval(t); return; }
+          player.join();
+          if (tries >= 3){ clearInterval(t);
+            app.innerHTML = '<div class="card center"><h2>לא נמצא חדר 😕</h2><p>בדקי שהקוד נכון ושמסך המנחה פתוח.</p><button class="btn btn-primary" id="bBack">חזרה</button></div>';
+            document.getElementById('bBack').onclick = function(){ location.reload(); };
+          }
+        }, 2500);
+      });
+    });
+  });
+}
+var lastRenderKey = null;
+function playerState(s){
+  var key = s.screen + '|' + (s.stage||'') + '|' + (s.qi||'') + (s.screen==='lobby' ? '|' + (s.players||[]).length : '');
+  if (key === lastRenderKey) return;
+  lastRenderKey = key;
+  if (s.screen !== 'intro' && window._pbox) { stopExplainer(window._pbox); window._pbox = null; }
+  if (s.screen === 'lobby') playerLobby(s);
+  else if (s.screen === 'intro') playerIntro(s);
+  else if (s.screen === 'question') playerQuestion(s);
+  else if (s.screen === 'reveal') playerReveal(s);
+  else if (s.screen === 'stageEnd') playerStageEnd(s);
+  else if (s.screen === 'final') playerFinal(s);
+}
+function playerLobby(s){
+  stopCountdown();
+  var chips = (s.players||[]).map(function(p){ return '<span class="chip">'+esc(p.name)+'</span>'; }).join('');
+  app.innerHTML =
+    '<div class="card center" style="margin-top:8vh">' +
+      '<div class="big-emoji">⏳</div>' +
+      '<h1>נרשמת!</h1>' +
+      '<p>מחכה שהמנחה תתחיל את המשחק…</p>' +
+      '<div class="roster">'+chips+'</div>' +
+    '</div>';
+}
+function playerIntro(s){
+  stopCountdown();
+  app.innerHTML = '<div class="card center"><span class="status ok">שלב '+s.stage+' מתוך 5 · צפי בסרטון ההסבר</span></div><div id="explain" style="display:flex;flex:1"></div>' +
+    '<p class="center">מחכה לשאלות…</p>';
+  window._pbox = document.getElementById('explain');
+  introVideo(window._pbox, s.stage, function(){});
+}
+function playerQuestion(s){
+  var same = document.getElementById('qbox') && document.getElementById('qbox').dataset.qi === String(s.stage)+'-'+String(s.qi);
+  if (same) return;
+  stopCountdown();
+  var opts = s.options.map(function(o,i){
+    return '<button class="ans ans'+i+'" data-i="'+i+'"><span class="shape">'+['▲','◆','●','■'][i]+'</span>'+esc(o)+'</button>';
+  }).join('');
+  app.innerHTML =
+    '<div class="card" id="qbox" data-qi="'+s.stage+'-'+s.qi+'">' +
+      '<div style="display:flex;justify-content:space-between"><span class="qmeta">שלב '+s.stage+'</span><span class="qmeta">שאלה '+s.qi+'/'+s.total+'</span></div>' +
+      '<div class="timerbar"><div id="tbar"></div></div>' +
+      '<div class="qtext">'+esc(s.q)+'</div>' +
+      '<div class="answers">'+opts+'</div>' +
+      '<p class="center muted" id="lockMsg"></p>' +
+    '</div>';
+  startCountdown('tbar', null, (s.dur||QUESTION_MS));
+  Array.prototype.forEach.call(document.querySelectorAll('.ans'), function(b){
+    b.onclick = function(){
+      var i = parseInt(b.dataset.i);
+      player.answer(i);
+      b.classList.add('picked');
+      Array.prototype.forEach.call(document.querySelectorAll('.ans'), function(x){ x.disabled = true; });
+      document.getElementById('lockMsg').textContent = 'התשובה נעולה 🔒';
+    };
+  });
+}
+function playerReveal(s){
+  stopCountdown();
+  var ok = s.lastOk, gain = s.lastGain || 0;
+  if (s.lastGain !== null && s.lastGain !== undefined) beep(ok);
+  var rank = '';
+  if (s.top){ for (var i=0;i<s.top.length;i++) if (s.top[i].pid === myPid) rank = 'מקום '+(i+1); }
+  app.innerHTML =
+    '<div class="card center" style="margin-top:14vh">' +
+      '<div class="feedback '+(ok?'ok':'no')+'">'+(ok?'נכון! 🎉':(s.timeout?'נגמר הזמן ⏱':'לא הפעם 😅'))+'</div>' +
+      (gain?'<p style="font-size:1.4rem;font-weight:800">+'+gain+' נקודות</p>':'<p class="muted">בלי נקודות בסבב הזה</p>') +
+      (rank?'<p class="muted">'+rank+' כרגע</p>':'') +
+    '</div>';
+}
+function playerStageEnd(s){
+  stopCountdown();
+  var me = null;
+  (s.board||[]).forEach(function(p,i){ if (p.pid === myPid) me = {rank:i+1, stage:p.stageScore, total:p.score}; });
+  app.innerHTML =
+    '<div class="card center" style="margin-top:6vh">' +
+      '<div class="big-emoji">🏁</div>' +
+      '<h2>סוף שלב '+s.stage+'</h2>' +
+      (s.winner?'<div class="winner-banner">🌟 מנצחת השלב: '+esc(s.winner.name)+' 🌟</div>':'') +
+      (me?'<p style="font-size:1.15rem">את במקום '+me.rank+' · '+me.stage+' נקודות בשלב · '+me.total+' סה"כ</p>':'') +
+      '<p class="muted">מחכה שהמנחה תעבור לשלב הבא…</p>' +
+    '</div>';
+}
+function playerFinal(s){
+  stopCountdown();
+  var me = null;
+  (s.board||[]).forEach(function(p,i){ if (p.pid === myPid) me = {rank:i+1, total:p.score}; });
+  var b = s.board||[];
+  var podium = [b[1],b[0],b[2]].map(function(p,i){
+    if (!p) return '';
+    var cls = i===1?'p1':''; var h = i===1?120:(i===0?88:70);
+    return '<div class="'+cls+'" style="height:'+h+'px"><div style="font-size:1.6rem">'+['🥈','🥇','🥉'][i]+'</div>'+esc(p.name)+'<br><small>'+p.score+'</small></div>';
+  }).join('');
+  app.innerHTML =
+    '<div class="card center" style="margin-top:6vh">' +
+      '<div class="big-emoji">🏆</div>' +
+      '<h1>סוף המשחק!</h1>' +
+      '<div class="podium">'+podium+'</div>' +
+      (me?'<p style="font-size:1.3rem;font-weight:800">סיימת במקום '+me.rank+' עם '+me.total+' נקודות</p>':'') +
+      '<p class="muted">כל הכבוד! 🎉</p>' +
+    '</div>';
+  beep(true);
+}
+
+showHome();
+</script>
+</body>
+</html>
