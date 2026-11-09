@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>קומבי-קוויז | משחק קבוצתי בקומבינטוריקה</title>
-<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="mqtt.min.js"></script>
+<script>window.mqtt || document.write('<script src="https:\/\/unpkg.com\/mqtt@5.10.1\/dist\/mqtt.min.js"><\/script>')</script>
+<script>window.mqtt || document.write('<script src="https:\/\/cdn.jsdelivr.net\/npm\/mqtt@5.10.1\/dist\/mqtt.min.js"><\/script>')</script>
 <script src="game-core.js"></script>
 <script src="secure-channel.js"></script>
 <script src="qrcode.min.js"></script>
@@ -85,12 +87,14 @@
 <script>
 'use strict';
 /* ================= setup ================= */
-var BROKERS = ['wss://broker.emqx.io:8084/mqtt'];
+var BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
+var CONNECT_TIMEOUT_MS = 20000;
 var qs = new URLSearchParams(location.search);
 var QUESTION_MS = (parseInt(qs.get('qsec')) || 30) * 1000;
 var REVEAL_MS = (parseInt(qs.get('rsec')) || 6) * 1000;
 var hash = new URLSearchParams((location.hash || '').replace(/^#/, ''));
 var app = document.getElementById('app');
+var QSEL = { topic: 'all', count: 20 };
 var mqttClient = null, host = null, player = null, myPid = null, STAGES = null;
 function loadStages(cb){
   if (window.STAGES) { STAGES = window.STAGES; cb(); return; }
@@ -115,11 +119,58 @@ function beep(ok){
     o.start(); o.stop(ctx.currentTime + (ok?0.25:0.45));
   }catch(e){}
 }
-function connectMqtt(onReady){
-  var c = mqtt.connect(BROKERS[0], { connectTimeout: 12000, reconnectPeriod: 3000,
-    clientId: 'cq-web-' + Math.random().toString(36).slice(2) });
-  c.on('connect', function(){ onReady(c); });
-  return c;
+function connectMqtt(onReady, onFail){
+  if (!window.mqtt) { onFail && onFail(); return; }
+  // Connect to ALL brokers and keep every live link, so host and player agree
+  // even when their networks reach different brokers. Duplicates are dropped
+  // by the seq/ctr replay guards in secure-channel.js.
+  var settled = false, clients = [], live = [], subs = [], msgHandlers = [];
+  var multi = {
+    publish: function(topic, data){ live.forEach(function(c){ try{ c.publish(topic, data); }catch(e){} }); },
+    subscribe: function(topic, cb){
+      subs.push(topic);
+      var left = live.length, done = false;
+      if (!left) { cb && cb(); return; }
+      live.forEach(function(c){ c.subscribe(topic, function(){ if (!done){ done = true; cb && cb(); } }); });
+    },
+    on: function(ev, fn){ if (ev === 'message') msgHandlers.push(fn); },
+    end: function(){ clients.forEach(function(c){ try{ c.end(true); }catch(e){} }); }
+  };
+  var timer = setTimeout(function(){
+    if (settled) return; settled = true;
+    clients.forEach(function(c){ try{ c.end(true); }catch(e){} });
+    onFail && onFail();
+  }, CONNECT_TIMEOUT_MS);
+  BROKERS.forEach(function(url){
+    var c = mqtt.connect(url, { connectTimeout: CONNECT_TIMEOUT_MS - 1000, reconnectPeriod: 3000,
+      clientId: 'cq-web-' + Math.random().toString(36).slice(2) });
+    clients.push(c);
+    c.on('message', function(t, p){ msgHandlers.forEach(function(h){ h(t, p); }); });
+    c.on('close', function(){ var i = live.indexOf(c); if (i >= 0) live.splice(i, 1); });
+    c.on('connect', function(){
+      if (live.indexOf(c) < 0) live.push(c);
+      subs.forEach(function(t){ c.subscribe(t); });
+      console.log('combi-quiz connected via', url);
+      if (!settled) {
+        settled = true; clearTimeout(timer);
+        // short grace so a slightly slower second broker joins before the room opens
+        setTimeout(function(){ onReady(multi); }, 2500);
+      }
+    });
+    c.on('error', function(){});
+  });
+}
+function connFail(prefix){
+  app.innerHTML =
+    '<div class="card center" style="margin-top:8vh">' +
+      '<div class="big-emoji">📡</div>' +
+      '<h2>אין חיבור לשירות ההודעות</h2>' +
+      '<p>'+prefix+' בדקי שהאינטרנט פעיל ושהרשת (למשל בבית ספר) לא חוסמת את החיבור, ונסי שוב.</p>' +
+      '<button class="btn btn-primary" id="bRetry">נסי שוב 🔄</button>' +
+      '<button class="btn btn-second" id="bHome">חזרה למסך הבית</button>' +
+    '</div>';
+  document.getElementById('bHome').onclick = function(){ location.hash=''; location.reload(); };
+  return document.getElementById('bRetry');
 }
 function stopCountdown(){ if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } }
 function startCountdown(barId, numId, durMs, fromMs){
@@ -206,7 +257,9 @@ function hostCreate(){
 }
 function fmtCode(c){ c = CombiSecure.normalizeCode(c); return c.replace(/(.{3})(.{3})(.{3})/, '$1-$2-$3'); }
 function connectHost(room){
-  mqttClient = connectMqtt(function(c){
+  mqttClient = null;
+  connectMqtt(function(c){
+    mqttClient = c;
     CombiSecure.createHostChannel(room, { publish: function(topic, env){ c.publish(topic, JSON.stringify(env)); } }).then(function(ch){
       c.subscribe(ch.topics.inn, function(){
         host = new CombiCore.HostGame({
@@ -218,7 +271,7 @@ function connectHost(room){
         hostLobby();
       });
     });
-  });
+  }, function(){ var b = connFail('יצירת החדר נתקעה כי אין תשובה מהשירות.'); b.onclick = hostCreate; });
 }
 function hostEvent(kind, d){
   if (kind === 'join') { if (host.state === 'lobby') hostLobby(); }
@@ -238,18 +291,33 @@ function hostLobby(){
     '<div class="card center">' +
       '<div><span class="status ok">מחובר</span></div>' +
       '<h2>החדר מוכן!</h2>' +
-      '<p>השחקניות סורקות את הקוד הזה עם המצלמה:</p>' +
+      '<p id="qrHint">השחקניות סורקות את הקוד הזה עם המצלמה:</p>' +
       '<div class="qrwrap"><div id="qrBox"></div></div>' +
       '<p style="margin:4px 0 0">או מקישות את קוד החדר:</p>' +
       '<div class="code-box" dir="ltr">'+fmtCode(host.room)+'</div>' +
       '<h2>שחקניות ('+host.roster().length+')</h2>' +
       '<div class="roster">'+chips+'</div>' +
+      '<div class="card" style="background:#faf8ff;margin:10px 0;text-align:right"><b>איזה נושא משחקות?</b>' +
+        STAGES.map(function(st,k){ return '<label style="display:block;margin:6px 0"><input type="radio" name="topic" value="'+k+'"'+(QSEL.topic===k?' checked':'')+'> שלב '+st.id+' · '+esc(st.title)+'</label>'; }).join('') +
+        '<label style="display:block;margin:6px 0"><input type="radio" name="topic" value="all"'+(QSEL.topic==='all'?' checked':'')+'> כל חמשת השלבים ברצף</label>' +
+        '<div style="margin-top:8px"><b>כמה שאלות בכל נושא?</b> <select id="qCount">'+[5,10,15,20].map(function(n){ return '<option value="'+n+'"'+(QSEL.count===n?' selected':'')+'>'+n+'</option>'; }).join('')+'</select></div>' +
+      '</div>' +
       '<button class="btn btn-primary" id="bStart" '+(host.roster().length?'':'disabled style="opacity:.5"')+'>מתחילות! 🎮</button>' +
       '<p class="muted" style="font-size:.85rem">אל תסגרי את הלשונית - המסך שלך מנהל את המשחק.</p>' +
     '</div>';
   var qrOk = window.CombiQr && CombiQr.draw(document.getElementById('qrBox'), joinUrl);
-  if (!qrOk) document.querySelector('.qrwrap').style.display = 'none';
-  document.getElementById('bStart').onclick = function(){ if (host.roster().length) host.startGame(); };
+  if (!qrOk) {
+    document.querySelector('.qrwrap').style.display = 'none';
+    document.getElementById('qrHint').textContent = 'השחקניות מקישות את קוד החדר:';
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('input[name=topic]'), function(el){ el.onchange = function(){ QSEL.topic = (el.value === 'all') ? 'all' : +el.value; }; });
+  document.getElementById('qCount').onchange = function(){ QSEL.count = +this.value; };
+  document.getElementById('bStart').onclick = function(){
+    if (!host.roster().length) return;
+    var pick = (QSEL.topic === 'all') ? STAGES : [STAGES[QSEL.topic]];
+    host.stages = pick.map(function(st){ var o = {}; for (var key in st) o[key] = st[key]; o.questions = st.questions.slice(0, Math.min(QSEL.count, st.questions.length)); return o; });
+    host.startGame();
+  };
 }
 function introVideo(box, st, onEnd){
   var v = document.createElement('video');
@@ -265,7 +333,7 @@ function introVideo(box, st, onEnd){
 }
 function hostIntro(){
   stopCountdown();
-  var st = host.stageIdx + 1;
+  var st = host.stageNo(host.stageIdx);
   app.innerHTML = '<div class="card center"><span class="status ok">שלב '+st+' מתוך 5 · סרטון הסבר לפני השאלות</span></div><div id="explain" style="display:flex;flex:1"></div>' +
     '<button class="btn btn-accent" id="bSkip">דלגי לשאלות ⏭</button>';
   var box = document.getElementById('explain');
@@ -279,7 +347,7 @@ function hostQuestion(d){
   }).join('');
   app.innerHTML =
     '<div class="card">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center"><span class="qmeta">שלב '+(host.stageIdx+1)+' · '+esc(host.currentStage().title)+'</span><span class="qmeta">שאלה '+d.qi+'/'+d.total+'</span></div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center"><span class="qmeta">שלב '+host.stageNo(host.stageIdx)+' · '+esc(host.currentStage().title)+'</span><span class="qmeta">שאלה '+d.qi+'/'+d.total+'</span></div>' +
       '<div class="timerbar"><div id="tbar"></div></div>' +
       '<div class="qtext">'+esc(q.q)+'</div>' +
       '<div class="answers">'+opts+'</div>' +
@@ -307,11 +375,11 @@ function hostReveal(d){
 function hostStageEnd(d){
   stopCountdown();
   var rows = d.board.map(function(p,i){ return '<tr><td>'+(i+1)+'</td><td>'+esc(p.name)+'</td><td>'+p.stageScore+'</td><td style="text-align:left">'+p.score+'</td></tr>'; }).join('');
-  var last = (d.stage >= 5);
+  var last = (host.stageIdx + 1 >= host.stages.length);
   app.innerHTML =
     '<div class="card center">' +
       '<div class="big-emoji">🏁</div>' +
-      '<h2>סוף שלב '+d.stage+': '+esc(d.title)+'</h2>' +
+      '<h2>סוף שלב '+d.stage+': '+esc(host.currentStage().title)+'</h2>' +
       (d.winner ? '<div class="winner-banner">🌟 מנצחת השלב: '+esc(d.winner.name)+' עם '+d.winner.stageScore+' נקודות! 🌟</div>' : '') +
       '<table class="board"><tr><td></td><td></td><td>בשלב</td><td style="text-align:left">סה"כ</td></tr>'+rows+'</table>' +
       '<button class="btn btn-primary" id="bNext">'+(last?'לתוצאות הגמר 🏆':'לשלב הבא ⏭')+'</button>' +
@@ -363,7 +431,8 @@ function doJoin(){
   if (!name){ msg.textContent = 'צריך לבחור שם משתמש'; return; }
   msg.textContent = 'מתחברת…';
   myPid = 'p-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-  mqttClient = connectMqtt(function(c){
+  connectMqtt(function(c){
+    mqttClient = c;
     CombiSecure.createPlayerChannel(code, myPid, {
       publish: function(topic, env){ c.publish(topic, JSON.stringify(env)); },
       onTamper: function(){
@@ -391,7 +460,7 @@ function doJoin(){
         }, 2500);
       });
     });
-  });
+  }, function(){ var b = connFail(''); b.onclick = function(){ showJoin(); }; });
 }
 var lastRenderKey = null;
 function playerState(s){
@@ -419,7 +488,7 @@ function playerLobby(s){
 }
 function playerIntro(s){
   stopCountdown();
-  app.innerHTML = '<div class="card center"><span class="status ok">שלב '+s.stage+' מתוך 5 · צפי בסרטון ההסבר</span></div><div id="explain" style="display:flex;flex:1"></div>' +
+  app.innerHTML = '<div class="card center"><span class="status ok">שלב '+s.stage+' · צפי בסרטון ההסבר</span></div><div id="explain" style="display:flex;flex:1"></div>' +
     '<p class="center">מחכה לשאלות…</p>';
   window._pbox = document.getElementById('explain');
   introVideo(window._pbox, s.stage, function(){});

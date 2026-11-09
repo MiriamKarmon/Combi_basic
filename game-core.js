@@ -63,7 +63,7 @@ HostGame.prototype.roster = function () {
 };
 
 HostGame.prototype.heartbeat = function () {
-  this.broadcast({ t: 'hb', state: this.state, stage: this.stageIdx + 1, q: this.qIdx + 1 });
+  this.broadcast({ t: 'hb', state: this.state, stage: this.stageNo(this.stageIdx), q: this.qIdx + 1 });
 };
 
 HostGame.prototype.handleMessage = function (topic, m) {
@@ -84,7 +84,7 @@ HostGame.prototype.onJoin = function (m) {
   }
   this.broadcast({ t: 'roster', players: this.roster() });
   // sync the joiner with current state
-  var sync = { t: 'sync', state: this.state, stage: this.stageIdx + 1, q: this.qIdx + 1, players: this.roster() };
+  var sync = { t: 'sync', state: this.state, stage: this.stageNo(this.stageIdx), q: this.qIdx + 1, players: this.roster() };
   if (this.state === 'question') {
     sync.question = this.currentPublicQuestion();
   }
@@ -102,8 +102,8 @@ HostGame.prototype.startStage = function (idx) {
   this.qIdx = -1;
   this.state = 'intro';
   for (var pid in this.players) { this.players[pid].stageScore = 0; }
-  this.broadcast({ t: 'intro', stage: idx + 1, title: this.stages[idx].title, formula: this.stages[idx].formula || null });
-  this.onEvent('intro', { stage: idx + 1 });
+  this.broadcast({ t: 'intro', stage: this.stageNo(idx), title: this.stages[idx].title, formula: this.stages[idx].formula || null });
+  this.onEvent('intro', { stage: this.stageNo(idx) });
 };
 
 HostGame.prototype.introDone = function () { // host pressed skip / animation finished
@@ -111,12 +111,13 @@ HostGame.prototype.introDone = function () { // host pressed skip / animation fi
   this.nextQuestion();
 };
 
+HostGame.prototype.stageNo = function (idx) { var st = this.stages[idx]; return (st && st.id) ? st.id : idx + 1; };
 HostGame.prototype.currentStage = function () { return this.stages[this.stageIdx]; };
 
 HostGame.prototype.currentPublicQuestion = function () {
   var q = this.currentStage().questions[this.qIdx];
   return { q: q.q, options: q.options, qi: this.qIdx + 1, total: this.currentStage().questions.length,
-           stage: this.stageIdx + 1, stageTitle: this.currentStage().title,
+           stage: this.stageNo(this.stageIdx), stageTitle: this.currentStage().title,
            endsAt: this.questionEndsAt, dur: this.questionMs };
 };
 
@@ -190,8 +191,8 @@ HostGame.prototype.endStage = function () {
   }
   board.sort(function (a, b) { return b.stageScore - a.stageScore; });
   var winner = board.length ? board[0] : null;
-  this.broadcast({ t: 'stageEnd', stage: this.stageIdx + 1, title: this.currentStage().title, winner: winner, board: board, top: this.roster().slice(0, 5) });
-  this.onEvent('stageEnd', { stage: this.stageIdx + 1, winner: winner, board: board });
+  this.broadcast({ t: 'stageEnd', stage: this.stageNo(this.stageIdx), title: this.currentStage().title, winner: winner, board: board, top: this.roster().slice(0, 5) });
+  this.onEvent('stageEnd', { stage: this.stageNo(this.stageIdx), winner: winner, board: board });
 };
 
 HostGame.prototype.hostContinue = function () { // host taps "next" on stageEnd / final screens
